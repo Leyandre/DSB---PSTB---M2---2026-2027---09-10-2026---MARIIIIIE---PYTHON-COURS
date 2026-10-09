@@ -4,7 +4,13 @@ Le but de ce projet est de travailler sur un dataset donné via un API.
 Pour cela, nous allons travailler en groupe afin de nettoyer les données et les transformer
 afin d'avoir un dataset propre qu'on va pouvoir analyser.  
   
-Groupe : 
+Groupe :  
+  
+- 
+- 
+- 
+- 
+- Zhou Jérémy
   
 **----------------------------------------------------------------------------------------------------**  
   
