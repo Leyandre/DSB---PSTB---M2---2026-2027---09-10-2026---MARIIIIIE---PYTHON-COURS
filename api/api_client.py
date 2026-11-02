@@ -68,6 +68,58 @@ class APIClient:
         self.session = requests.Session()
         self.token = os.getenv("TOKEN")
 
+    # --------------------------------------------------
+    # Gestion des sauvegardes
+    # --------------------------------------------------
+
+    def get_backup_path(self, dataset_name: str) -> Path:
+        """Retourne le chemin du fichier de sauvegarde."""
+
+        return self.backup_dir / f"{dataset_name}.csv"
+
+    def save_dataset(
+        self,
+        dataset_name: str,
+        dataset: pd.DataFrame,
+    ) -> None:
+        """Sauvegarde un DataFrame dans un fichier CSV."""
+
+        backup_path = self.get_backup_path(dataset_name)
+
+        dataset.to_csv(
+            backup_path,
+            index=False,
+            encoding="utf-8-sig",
+        )
+
+    def load_dataset(
+        self,
+        dataset_name: str,
+    ) -> pd.DataFrame:
+        """Charge un DataFrame depuis une sauvegarde."""
+
+        backup_path = self.get_backup_path(dataset_name)
+
+        if not backup_path.exists():
+            raise FileNotFoundError(
+                f"Aucune sauvegarde trouvée pour {dataset_name}."
+            )
+
+        return pd.read_csv(
+            backup_path,
+            encoding="utf-8-sig",
+        )
+
+    def dataset_exists(self, dataset_name: str) -> bool:
+        """Vérifie si une sauvegarde existe."""
+
+        return self.get_backup_path(dataset_name).exists()
+
+
+    # --------------------------------------------------
+    # Récupération des données
+    # --------------------------------------------------
+
     def get_city_stations_id(self):
         response = self.session.get(
             self.STATIONS_METEO_URL,
@@ -138,6 +190,11 @@ class APIClient:
             return pd.concat(dataframes, ignore_index=True)
 
         return pd.DataFrame()
+
+
+    # --------------------------------------------------
+    # Méthode principale
+    # --------------------------------------------------
 
     def get_dataset(self, dataset_name: str) -> pd.DataFrame:
         """Récupère les données et les convertit en DataFrame."""
