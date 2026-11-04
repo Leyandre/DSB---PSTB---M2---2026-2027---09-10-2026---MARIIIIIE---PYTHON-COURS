@@ -55,8 +55,7 @@ class APIClient:
     )
 
     METEO_URL = (
-        "https://public-api.meteofrance.fr/public/DPObs/v2/"
-        "station/infrahoraire-6m?id_station="
+        "https://public-api.meteofrance.fr/public/DPPaquetObs/v2/paquet/horaire"
     )
 
     STATIONS_METEO_URL = (
@@ -125,70 +124,10 @@ class APIClient:
 
         return self.get_backup_path(dataset_name).exists()
 
-    def save_city_stations_id(self, stations_id: pd.Series) -> None:
-            """Sauvegarde les identifiants des stations météo dans un fichier CSV."""
-    
-            backup_path = self.get_backup_path("stations_id")
-    
-            stations_id.to_csv(
-                backup_path,
-                index=False,
-                header=True,
-                encoding="utf-8-sig",
-            )
-
-    def load_city_stations_id(self) -> pd.Series:
-        """Charge les identifiants des stations météo depuis une sauvegarde."""
-
-        backup_path = self.get_backup_path("stations_id")
-
-        # Récupère et sauvegarde les identifiants si la sauvegarde n'existe pas
-        if not backup_path.exists():
-            self.get_city_stations_id()
-
-        return pd.read_csv(
-            backup_path,
-            encoding="utf-8-sig",
-        )["Id_station"]
-
-    def city_stations_id_exists(self) -> bool:
-        """Vérifie si une sauvegarde des identifiants des stations météo existe."""
-
-        return self.get_backup_path("stations_id").exists()
-
 
     # --------------------------------------------------
     # Récupération des données
     # --------------------------------------------------
-
-    def get_city_stations_id(self):
-        response = self.session.get(
-            self.STATIONS_METEO_URL,
-            headers={
-                "accept": "*/*",
-                "apikey": self.token,
-            },
-            timeout=self.timeout,
-        )
-
-        stations_df = pd.read_csv(
-            BytesIO(response.content),
-            encoding="utf-8-sig",
-            sep=None,
-            engine="python",
-            dtype={"Id_station": str},
-        )
-        
-        id_stations_df = stations_df[
-            stations_df["Id_station"].str.startswith(
-                self.CITY_DEPARTEMENT_CODE,
-                na=False,
-            )
-        ]["Id_station"]
-
-        self.save_city_stations_id(id_stations_df)
-
-        return id_stations_df
 
     def get_velib_dataset(self):
         response = self.session.get(
@@ -205,46 +144,62 @@ class APIClient:
             engine="python",
         )
 
-    def get_meteo_dataset(self):
+    def get_meteo_dataset(self) -> pd.DataFrame:
+        """
+        Récupère les observations horaires des stations
+        météorologiques d'un département sur 24h.
+        """
+
         if not self.token:
             raise ValueError(
                 "TOKEN absent du fichier .env ou non chargé."
             )
 
-        # Récupération des identifiants des stations météo du département
-        if self.city_stations_id_exists():
-            list_stations_id = pd.read_csv(
-                self.get_backup_path("stations_id"),
-                encoding="utf-8-sig",
-            )["Id_station"]
-        else:
-            list_stations_id = self.get_city_stations_id()
+        headers = {
+            "accept": "*/*",
+            "apikey": self.token
+        }
+        response = requests.get(
+            self.METEO_URL,
+            params={"id-departement": self.CITY_DEPARTEMENT_CODE, "format": "json"},
+            headers=headers,
+            timeout=self.timeout
+        )
 
-        # Liste qui récupérera les DataFrames de chaque station
-        dataframes = []
+        if response.status_code != 200:
+            print("Code HTTP :", response.status_code)
+            print("Réponse :", response.text[:1000])
 
-        for station in list_stations_id:
+        response.raise_for_status()
 
-            url = f"{self.METEO_URL}{station}&format=json"
+        data = response.json()
 
-            response = self.session.get(
-                url,
-                headers={
-                    "accept": "*/*",
-                    "apikey": self.token,
-                },
-                timeout=self.timeout,
-            )
+        if not data:
+            return pd.DataFrame()
 
-            response.raise_for_status()
-            data = pd.json_normalize(response.json())
+        return pd.json_normalize(data)
 
-            dataframes.append(data)
+    def change_temperature_unit(self, dataset: pd.DataFrame) -> pd.DataFrame:
+        """
+        Convertit les colonnes de température de Kelvin à Celsius.
+        """
 
-        if dataframes:
-            return pd.concat(dataframes, ignore_index=True)
+        temperature_columns = ["t", "td", "tx", "tn"]
 
-        return pd.DataFrame()
+        for column in temperature_columns:
+            if column in dataset.columns:
+                dataset[column] = (dataset[column] - 273.15).round(2)
+
+        dataset = dataset.rename(
+            columns={
+                "t": "temperature_celsius",
+                "td": "temperature_point_rosee_celsius",
+                "tx": "temperature_max_celsius",
+                "tn": "temperature_min_celsius",
+            }
+        )
+
+        return dataset
 
 
     # --------------------------------------------------
@@ -285,12 +240,10 @@ class APIClient:
 
         elif dataset_name == "meteo":
             dataset = self.get_meteo_dataset()
+            dataset = self.change_temperature_unit(dataset)
 
         # Sauvegarde automatique
-        self.save_dataset(
-            dataset_name,
-            dataset,
-        )
+        self.save_dataset(dataset_name,dataset)
 
         return dataset
 
