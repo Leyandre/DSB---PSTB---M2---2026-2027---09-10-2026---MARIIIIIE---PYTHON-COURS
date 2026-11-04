@@ -1,7 +1,9 @@
 import os
 import requests
 import pandas as pd
+
 from io import BytesIO
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -63,10 +65,18 @@ class APIClient:
 
     CITY_DEPARTEMENT_CODE = "75"
 
-    def __init__(self, timeout: int = 30):
+    def __init__(
+        self,
+        timeout: int = 30,
+        backup_dir: str = "data/backup",
+    ):
         self.timeout = timeout
         self.session = requests.Session()
         self.token = os.getenv("TOKEN")
+
+        # Dossier de sauvegarde
+        self.backup_dir = Path(backup_dir)
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------------------------------------
     # Gestion des sauvegardes
@@ -115,6 +125,37 @@ class APIClient:
 
         return self.get_backup_path(dataset_name).exists()
 
+    def save_city_stations_id(self, stations_id: pd.Series) -> None:
+            """Sauvegarde les identifiants des stations météo dans un fichier CSV."""
+    
+            backup_path = self.get_backup_path("stations_id")
+    
+            stations_id.to_csv(
+                backup_path,
+                index=False,
+                header=True,
+                encoding="utf-8-sig",
+            )
+
+    def load_city_stations_id(self) -> pd.Series:
+        """Charge les identifiants des stations météo depuis une sauvegarde."""
+
+        backup_path = self.get_backup_path("stations_id")
+
+        # Récupère et sauvegarde les identifiants si la sauvegarde n'existe pas
+        if not backup_path.exists():
+            self.get_city_stations_id()
+
+        return pd.read_csv(
+            backup_path,
+            encoding="utf-8-sig",
+        )["Id_station"]
+
+    def city_stations_id_exists(self) -> bool:
+        """Vérifie si une sauvegarde des identifiants des stations météo existe."""
+
+        return self.get_backup_path("stations_id").exists()
+
 
     # --------------------------------------------------
     # Récupération des données
@@ -138,13 +179,20 @@ class APIClient:
             dtype={"Id_station": str},
         )
         
-        id_stations_df = stations_df[stations_df["Id_station"].str.startswith("75", na=False)]["Id_station"]
+        id_stations_df = stations_df[
+            stations_df["Id_station"].str.startswith(
+                self.CITY_DEPARTEMENT_CODE,
+                na=False,
+            )
+        ]["Id_station"]
+
+        self.save_city_stations_id(id_stations_df)
 
         return id_stations_df
 
     def get_velib_dataset(self):
         response = self.session.get(
-            self.dataset_url,
+            self.VELIB_URL,
             timeout=self.timeout,
         )
 
@@ -163,14 +211,21 @@ class APIClient:
                 "TOKEN absent du fichier .env ou non chargé."
             )
 
-        list_stations_id = self.get_city_stations_id()
+        # Récupération des identifiants des stations météo du département
+        if self.city_stations_id_exists():
+            list_stations_id = pd.read_csv(
+                self.get_backup_path("stations_id"),
+                encoding="utf-8-sig",
+            )["Id_station"]
+        else:
+            list_stations_id = self.get_city_stations_id()
 
         # Liste qui récupérera les DataFrames de chaque station
         dataframes = []
 
         for station in list_stations_id:
 
-            url = f"{self.dataset_url}{station}&format=json"
+            url = f"{self.METEO_URL}{station}&format=json"
 
             response = self.session.get(
                 url,
@@ -196,24 +251,53 @@ class APIClient:
     # Méthode principale
     # --------------------------------------------------
 
-    def get_dataset(self, dataset_name: str) -> pd.DataFrame:
-        """Récupère les données et les convertit en DataFrame."""
+    def get_dataset(
+        self,
+        dataset_name: str,
+        use_cache: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Récupère un dataset.
 
-        """Choisit le dataset à récupérer."""
-        if dataset_name == "velib":
-            self.dataset_url = self.VELIB_URL
-            dataset = self.get_velib_dataset()
+        Si use_cache=True :
+            Charge la sauvegarde si elle existe.
 
-        elif dataset_name == "meteo":
-            self.dataset_url = self.METEO_URL
-            dataset = self.get_meteo_dataset()
+        Si use_cache=False :
+            Récupère directement les données via l'API.
 
-        else:
+        Les données récupérées sont sauvegardées automatiquement.
+        """
+
+        # Vérification du nom du dataset
+        if dataset_name not in ("velib", "meteo"):
             raise ValueError(
                 "Dataset inconnu. Choisissez 'velib' ou 'meteo'."
             )
 
+        # Vérification de la sauvegarde
+        if use_cache and self.dataset_exists(dataset_name):
+
+            return self.load_dataset(dataset_name)
+
+        # Récupération via API
+        if dataset_name == "velib":
+            dataset = self.get_velib_dataset()
+
+        elif dataset_name == "meteo":
+            dataset = self.get_meteo_dataset()
+
+        # Sauvegarde automatique
+        self.save_dataset(
+            dataset_name,
+            dataset,
+        )
+
         return dataset
+
+
+    # --------------------------------------------------
+    # Fermeture de la session
+    # --------------------------------------------------
 
     def close(self) -> None:
         self.session.close()
@@ -221,5 +305,10 @@ class APIClient:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback,
+    ):
         self.close()
