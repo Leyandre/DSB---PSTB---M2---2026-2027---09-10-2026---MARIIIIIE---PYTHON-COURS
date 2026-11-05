@@ -45,6 +45,7 @@ def fetch_dataset(dataset: str) -> pd.DataFrame:
         return client.get_dataset(dataset)
 
 
+#Petite classe pour récupérer les données Vélib et météo via les API publiques.
 class APIClient:
     """Client pour récupérer les données Vélib et météo."""
 
@@ -63,6 +64,22 @@ class APIClient:
     )
 
     CITY_DEPARTEMENT_CODE = "75"
+
+    # Correspondance entre les champs Météo-France et les noms compréhensibles
+    COLONNES_METEO = {
+        "geo_id_insee": "identifiant_station",
+        "lat": "latitude",
+        "lon": "longitude",
+        "validity_time": "date_observation",
+        "t": "temperature_kelvin",
+        "td": "point_rosee_kelvin",
+        "u": "humidite_relative_pct",
+        "dd": "direction_vent_deg",
+        "ff": "vitesse_vent_ms",
+        "vv": "visibilite_m",
+        "pres": "pression_station_pa",
+        "pmer": "pression_mer_pa",
+    }
 
     def __init__(
         self,
@@ -179,6 +196,32 @@ class APIClient:
 
         return pd.json_normalize(data)
 
+    def keep_only_relevant_columns_and_change_their_names(self, dataset: pd.DataFrame) -> pd.DataFrame:
+        """
+        Conserve uniquement les colonnes pertinentes pour l'analyse.
+        """
+
+        relevant_columns = [
+            "geo_id_insee",
+            "lat",
+            "lon",
+            "validity_time",
+            "t",
+            "td",
+            "u",
+            "dd",
+            "ff",
+            "vv",
+            "pres",
+            "pmer",
+        ]
+
+        dataset = dataset[relevant_columns]
+
+        dataset = dataset.rename(columns=self.COLONNES_METEO)
+
+        return dataset
+
     def change_temperature_unit(self, dataset: pd.DataFrame) -> pd.DataFrame:
         """
         Convertit les colonnes de température de Kelvin à Celsius.
@@ -189,15 +232,6 @@ class APIClient:
         for column in temperature_columns:
             if column in dataset.columns:
                 dataset[column] = (dataset[column] - 273.15).round(2)
-
-        dataset = dataset.rename(
-            columns={
-                "t": "temperature_celsius",
-                "td": "temperature_point_rosee_celsius",
-                "tx": "temperature_max_celsius",
-                "tn": "temperature_min_celsius",
-            }
-        )
 
         return dataset
 
@@ -241,6 +275,7 @@ class APIClient:
         elif dataset_name == "meteo":
             dataset = self.get_meteo_dataset()
             dataset = self.change_temperature_unit(dataset)
+            dataset = self.keep_only_relevant_columns_and_change_their_names(dataset)
 
         # Sauvegarde automatique
         self.save_dataset(dataset_name,dataset)
