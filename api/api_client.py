@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
+#Petite fonction pour récupérer les données Vélib et météo via les API publiques.
 def fetch_dataset(dataset: str) -> pd.DataFrame:
     """
     Récupère les données d'un jeu de données Vélib ou météo
